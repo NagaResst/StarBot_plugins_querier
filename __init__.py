@@ -1,0 +1,1 @@
+import StarBot_plugins_querier.onboard
