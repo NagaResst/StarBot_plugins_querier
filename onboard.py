@@ -20,27 +20,33 @@ credential = get_credential()
 channel = Channel.current()
 
 
-async def query_onboard_list(user_info):
-    onboard_list = []
+async def query_onboard_list(user_id):
     query_count = 1
-    user_info = await request("GET", f"https://api.live.bilibili.com/live_user/v1/Master/info?uid={_up}",
-                              credential=credential)
-    url = f"https://api.live.bilibili.com/xlive/app-room/v2/guardTab/topListNew?roomid={user_info['room_id']}&page={query_count}&ruid={_up}&page_size=30&typ=0"
+    up_info = await request("GET", f"https://api.live.bilibili.com/live_user/v1/Master/info?uid={_up}",
+                            credential=credential)
+    url = f"https://api.live.bilibili.com/xlive/app-room/v2/guardTab/topListNew?roomid={up_info['room_id']}&page={query_count}&ruid={_up}&page_size=30&typ=0"
     top_list = await request("GET", url, credential=credential)
     title = top_list["info"]["num"]
-    for top_user in top_list["top3"]:
-        onboard_list.append(top_user["uinfo"]["uid"])
-    for user in top_list["list"]:
-        onboard_list.append(user["uinfo"]["uid"])
+    pages = title / 30 + 2
 
-    while len(onboard_list) != title:
-        query_count += 1
-        url = f"https://api.live.bilibili.com/xlive/app-room/v2/guardTab/topListNew?roomid={user_info['room_id']}&page={query_count}&ruid={_up}&page_size=30&typ=0"
-        top_list = await request("GET", url, credential=credential)
-        for user in top_list["list"]:
-            onboard_list.append(user["uinfo"]["uid"])
+    while query_count <= pages:
+        if query_count == 1:
+            for user in top_list["top3"]:
+                if user_id == user["uinfo"]["uid"]:
+                    return True
+            for user in top_list["list"]:
+                if user_id == user["uinfo"]["uid"]:
+                    return True
+            query_count += 1
+        else:
+            url = f"https://api.live.bilibili.com/xlive/app-room/v2/guardTab/topListNew?roomid={up_info['room_id']}&page={query_count}&ruid={_up}&page_size=30&typ=0"
+            top_list = await request("GET", url, credential=credential)
+            for user in top_list["list"]:
+                if user_id == user["uinfo"]["uid"]:
+                    return True
+            query_count += 1
 
-    return onboard_list
+    return False
 
 
 @channel.use(
@@ -59,27 +65,30 @@ async def onboard(app: Ariadne, source: Source, sender: Group, member: Member, u
 
     user_info = await request("GET", f"https://api.live.bilibili.com/live_user/v1/Master/info?uid={uid}",
                               credential=credential)
+    if user_info["info"]["uname"] == "":
+        logger.info("查询失败，该用户可能不存在")
+        await app.send_message(sender, MessageChain("查询失败，该用户可能不存在"), quote=source)
+        return
+
     medalwall = await request("GET", f"https://api.live.bilibili.com/xlive/web-ucenter/user/MedalWall?target_id={uid}",
                               credential=credential)
 
-    have_medal = False
     for medal in medalwall["list"]:
         if medal["medal_info"]["target_id"] == _up:
             logger.info(f'UID:{uid} 用户名：{user_info["info"]["uname"]}的徽章等级为{medal["medal_info"]["level"]}')
             await app.send_message(sender, MessageChain(
                 f'UID:{uid} 用户名：{user_info["info"]["uname"]}的 {medal["medal_info"]["medal_name"]} 徽章 等级为 {medal["medal_info"]["level"]}'),
                                    quote=source)
-            have_medal = True
+            return
 
-    if not have_medal:
-        logger.info(f'没有查询到 {uid} 的徽章')
-        onboard_list = await query_onboard_list(user_info)
+    logger.info(f'没有查询到 {uid} 的徽章')
+    onboard_list = await query_onboard_list(user_info["info"]["uid"])
 
-        if int(uid.display) in onboard_list:
-            await app.send_message(sender, MessageChain(
-                f'虽然没有查询到 UID:{uid} 用户名：{user_info["info"]["uname"]} 的徽章, 但该用户目前正处于大航海中'),
-                                   quote=source)
-        else:
-            await app.send_message(sender, MessageChain(
-                f'没有查询到 UID:{uid} 用户名：{user_info["info"]["uname"]} 的徽章, 同时也没有查询到该用户处于大航海中'),
-                                   quote=source)
+    if onboard_list:
+        await app.send_message(sender, MessageChain(
+            f'虽然没有查询到 UID:{uid} 用户名：{user_info["info"]["uname"]} 的徽章, 但该用户目前正处于大航海中'),
+                               quote=source)
+    else:
+        await app.send_message(sender, MessageChain(
+            f'没有查询到 UID:{uid} 用户名：{user_info["info"]["uname"]} 的徽章, 同时也没有查询到该用户处于大航海中'),
+                               quote=source)
